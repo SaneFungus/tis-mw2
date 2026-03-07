@@ -11,6 +11,10 @@ import {
   BookOpen,
   Music,
   LayoutGrid,
+  Layers,
+  Sun,
+  Moon,
+  Info,
 } from "lucide-react"
 
 // ─── Seeded random for stable SVG rendering ───────────────────────
@@ -826,99 +830,218 @@ const App: React.FC = () => {
 
         {/* ─── MANIFESTO / THEORY VIEW ─── */}
         {view === "manifesto" && (
-          <div className="w-full max-w-xl animate-fade-in space-y-8 pb-12">
+          <div className="w-full max-w-3xl animate-fade-in space-y-8 pb-20">
+            {/* Header section with Irzykowski quote */}
             <section
-              className={`p-8 rounded-3xl ${
+              className={`p-8 rounded-3xl border-l-8 ${
                 isDark
-                  ? "bg-stone-900 text-stone-300"
-                  : "bg-white text-stone-700"
-              } shadow-xl`}
-            >
-              <h3 className="text-xl font-black uppercase mb-4 flex items-center gap-2">
-                <BookOpen size={20} />{" "}
-                {lang === "pl"
-                  ? "Aktor jako Instrument"
-                  : "Actor as Instrument"}
-              </h3>
-              <p className="text-sm leading-relaxed mb-4">
-                {lang === "pl"
-                  ? "Aktor instrumentalny traktuje swoją obecność na scenie abstrakcyjnie, jest jakby dźwiękiem w partyturze. Nie jest tylko wykonawcą tekstu, ale ciałem, które wydaje dźwięki: szuranie, chrupanie, bełkot, ciskanie przedmiotami."
-                  : "The instrumental actor treats their presence on stage abstractly, like a sound in a score. They are not just a text performer, but a body that emits sounds: shuffling, crunching, gibberish, throwing objects."}
-              </p>
-              <div
-                className={`p-4 rounded-xl font-mono text-xs border ${
-                  isDark
-                    ? "bg-black border-stone-800"
-                    : "bg-stone-50 border-stone-200"
-                }`}
-              >
-                {lang === "pl"
-                  ? "ZASADA: Absolutna dekompozycja formy. Brak ostatecznej wersji, dopóki materiał się nie zmanifestuje."
-                  : "PRINCIPLE: Absolute decomposition of form. No final version until the material manifests itself."}
-              </div>
-            </section>
-
-            <section
-              className={`p-8 rounded-3xl border-4 ${
-                isDark ? "border-amber-900/30" : "border-stone-200"
+                  ? "bg-stone-900 border-amber-600"
+                  : "bg-white border-stone-900 shadow-lg"
               }`}
             >
-              <h3 className="text-xl font-black uppercase mb-4 flex items-center gap-2 text-amber-500">
-                <Quote size={20} />{" "}
+              <h3 className="text-xl font-black uppercase mb-4 flex items-center gap-2">
+                <Quote size={20} className="text-amber-500" />
                 {lang === "pl" ? "Fundament Snu" : "Foundation of Dream"}
               </h3>
               <p
-                className="text-lg italic opacity-80 leading-snug"
+                className="text-2xl italic opacity-90 leading-tight mb-4"
                 style={{ fontFamily: "Georgia, serif" }}
               >
                 {lang === "pl"
-                  ? '„...przez szereg lat prowadziła życie pełne fantomowych snów"'
-                  : '"...for several years she had led a life full of phantom dreams"'}
+                  ? "„...przez szereg lat prowadziła życie pełne fantomowych snów”"
+                  : "“...for several years she had led a life full of phantom dreams”"}
               </p>
-              <p className="text-[10px] mt-4 uppercase tracking-widest opacity-40">
+              <p className="text-[10px] uppercase tracking-widest opacity-40">
                 Karol Irzykowski, Pałuba (Sny Marii Dunin)
               </p>
             </section>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div
-                className={`p-4 rounded-2xl text-center ${
-                  isDark ? "bg-stone-900" : "bg-white shadow"
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Instrumental Actor */}
+              <section
+                className={`p-6 rounded-3xl ${
+                  isDark
+                    ? "bg-stone-900 border border-stone-800"
+                    : "bg-stone-50 border border-stone-200 shadow-sm"
                 }`}
               >
-                <div className="text-2xl font-black mb-1">MW2</div>
-                <div className="text-[10px] opacity-50 uppercase tracking-tighter">
-                  Młodzi Wykonawcy Muzyki Współczesnej
-                </div>
-              </div>
-              <div
-                className={`p-4 rounded-2xl text-center ${
-                  isDark ? "bg-stone-900" : "bg-white shadow"
+                <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
+                  <Layers size={18} className="text-amber-500" />
+                  {lang === "pl"
+                    ? "Aktor jako Instrument"
+                    : "Actor as Instrument"}
+                </h4>
+                <p className="text-xs leading-relaxed opacity-70 mb-4">
+                  {lang === "pl"
+                    ? 'Aktor to artysta działający pomiędzy muzyką a teatrem. Jest "nastrojony jak instrument", traktuje swoją obecność abstrakcyjnie – jak dźwięk w partyturze.'
+                    : 'The actor is an artist working between music and theater. He is "tuned like an instrument", treats his presence abstractly – like a sound in a score.'}
+                </p>
+                <ul className="text-[10px] space-y-2 font-mono opacity-80 italic">
+                  <li>
+                    •{" "}
+                    {lang === "pl"
+                      ? "Ciało jako źródło dźwięku (szuranie, chrupanie, bełkot)"
+                      : "Body as a sound source (shuffling, crunching, gibberish)"}
+                  </li>
+                  <li>
+                    •{" "}
+                    {lang === "pl"
+                      ? "Konkretne rekwizyty: piła, Linki, piłeczki ping-pongowe"
+                      : "Concrete props: saw, strings, ping-pong balls"}
+                  </li>
+                  <li>
+                    •{" "}
+                    {lang === "pl"
+                      ? "Audiowizualność: gest ewokuje muzykę"
+                      : "Audiovisuality: gesture evokes music"}
+                  </li>
+                </ul>
+              </section>
+
+              {/* Absolute Decomposition */}
+              <section
+                className={`p-6 rounded-3xl ${
+                  isDark
+                    ? "bg-stone-900 border border-stone-800"
+                    : "bg-stone-50 border border-stone-200 shadow-sm"
                 }`}
               >
-                <div className="text-2xl font-black mb-1">1963</div>
-                <div className="text-[10px] opacity-50 uppercase tracking-tighter">
-                  Rok powstania TIS MW2
+                <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
+                  <RotateCcw size={18} className="text-amber-500" />
+                  {lang === "pl"
+                    ? "Absolutna Dekompozycja"
+                    : "Absolute Decomposition"}
+                </h4>
+                <p className="text-xs leading-relaxed opacity-70 mb-4">
+                  {lang === "pl"
+                    ? "Koncepcja zakładająca całkowitą swobodę w układzie elementów w czasie. Forma nie jest zamknięta, dopóki materiał nie zmanifestuje się w działaniu."
+                    : "A concept assuming complete freedom in the arrangement of elements in time. The form is not closed until the material manifests itself in action."}
+                </p>
+                <div
+                  className={`p-3 rounded-xl text-[9px] font-bold ${isDark ? "bg-black" : "bg-white"}`}
+                >
+                  {lang === "pl"
+                    ? "ZASADA: Brak ostatecznej formy (No final form)."
+                    : "PRINCIPLE: No final form."}
                 </div>
-              </div>
+              </section>
+
+              {/* Production Tension */}
+              <section
+                className={`p-6 rounded-3xl ${
+                  isDark
+                    ? "bg-stone-900 border border-stone-800"
+                    : "bg-stone-50 border border-stone-200 shadow-sm"
+                }`}
+              >
+                <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
+                  <Zap size={18} className="text-amber-500" />
+                  {lang === "pl"
+                    ? "Napięcie Produkcyjne"
+                    : "Production Tension"}
+                </h4>
+                <p className="text-xs leading-relaxed opacity-70">
+                  {lang === "pl"
+                    ? "Nie jest to improwizacja. To specyficzny stan napięcia wynikający z nieokreśloności partytury, który zmusza wykonawcę do bycia reżyserem własnej partii w czasie rzeczywistym."
+                    : "It is not improvisation. It is a specific state of tension resulting from the indefiniteness of the score, which forces the performer to be the director of their own part in real time."}
+                </p>
+              </section>
+
+              {/* Light Structure */}
+              <section
+                className={`p-6 rounded-3xl ${
+                  isDark
+                    ? "bg-stone-900 border border-stone-800"
+                    : "bg-stone-50 border border-stone-200 shadow-sm"
+                }`}
+              >
+                <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
+                  <Info size={18} className="text-amber-500" />
+                  {lang === "pl"
+                    ? "Struktura i Światło"
+                    : "Structure and Light"}
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-[10px] uppercase font-black text-center">
+                  <div
+                    className={`p-3 rounded-xl flex flex-col items-center gap-1 ${isDark ? "bg-black" : "bg-white"}`}
+                  >
+                    <Moon size={14} /> {lang === "pl" ? "Ciemność" : "Darkness"}
+                  </div>
+                  <div
+                    className={`p-3 rounded-xl flex flex-col items-center gap-1 ${isDark ? "bg-black" : "bg-white"}`}
+                  >
+                    <Sun size={14} /> {lang === "pl" ? "Światło" : "Light"}
+                  </div>
+                </div>
+                <p className="text-[9px] mt-3 opacity-50 italic">
+                  {lang === "pl"
+                    ? "Część I: Fantomowy sen w mroku. Część II: Ostra konfrontacja w pełnym blasku."
+                    : "Part I: Phantom dream in the dark. Part II: Sharp confrontation in full glare."}
+                </p>
+              </section>
+            </div>
+
+            {/* Historical context grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                {
+                  label: "MW2",
+                  value: "1963",
+                  sub: { pl: "Kraków", en: "Cracow" },
+                },
+                {
+                  label: "SCANDAL",
+                  value: "1964",
+                  sub: { pl: "Premiera", en: "Premiere" },
+                },
+                {
+                  label: "ACTOR",
+                  value: "PESZEK",
+                  sub: { pl: "Interpretator", en: "Interpreter" },
+                },
+                {
+                  label: "GENRE",
+                  value: "TIS",
+                  sub: { pl: "Instrumentalny", en: "Instrumental" },
+                },
+              ].map((box, i) => (
+                <div
+                  key={i}
+                  className={`p-4 rounded-2xl text-center flex flex-col justify-center ${
+                    isDark
+                      ? "bg-stone-900 border border-stone-800"
+                      : "bg-white shadow-sm border border-stone-100"
+                  }`}
+                >
+                  <div className="text-[9px] opacity-40 uppercase font-black">
+                    {box.label}
+                  </div>
+                  <div className="text-xl font-black">{box.value}</div>
+                  <div className="text-[9px] opacity-40 uppercase">
+                    {box.sub[lang]}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
       </main>
 
       {/* Footer */}
-      <footer className="mt-8 text-center max-w-md">
+      <footer className="mt-8 text-center max-w-md pb-8">
         <div
-          className={`text-[10px] font-mono mb-4 px-4 py-1 rounded border inline-block ${
+          className={`text-[10px] font-mono mb-4 px-4 py-2 rounded border inline-block ${
             isDark
               ? "border-stone-800 text-stone-500"
               : "border-stone-200 text-stone-400"
           }`}
         >
-          PRODUCTION TENSION:{" "}
-          {lang === "pl"
-            ? "Indywidualna interpretacja bez pomocy z zewnątrz."
-            : "Individual interpretation without outside help."}
+          {lang === "pl" ? "ESTETYKA:" : "AESTHETICS:"}
+          <span className="ml-1 opacity-80">
+            {lang === "pl"
+              ? "Rozbieżność między reprezentacją a rzeczywistością."
+              : "Discrepancy between representation and reality."}
+          </span>
         </div>
       </footer>
     </div>
