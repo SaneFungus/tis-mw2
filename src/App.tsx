@@ -942,8 +942,8 @@ const App: React.FC = () => {
                 </h4>
                 <p className="text-xs leading-relaxed opacity-70">
                   {lang === "pl"
-                    ? "Nie jest to improwizacja. To specyficzny stan napięcia wynikający z nieokreśloności partytury, który zmusza wykonawcę do bycia reżyserem własnej partii w czasie rzeczywistym."
-                    : "It is not improvisation. It is a specific state of tension resulting from the indefiniteness of the score, which forces the performer to be the director of their own part in real time."}
+                    ? "Nie jest to czysta improwizacja. To specyficzny stan napięcia wynikający z nieokreśloności partytury, który zmusza wykonawcę do bycia reżyserem własnej partii w czasie rzeczywistym."
+                    : "It is not a pure improvisation. It is a specific state of tension resulting from the indefiniteness of the score, which forces the performer to be the director of their own part in real time."}
                 </p>
               </section>
 
