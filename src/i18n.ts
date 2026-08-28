@@ -54,6 +54,9 @@ export const UI = {
   seqRegenerate: { pl: "Nowa partytura", en: "New score" },
   seqLength: { pl: "Długość partytury", en: "Score length" },
   seqStep: { pl: "Krok", en: "Step" },
+  seqDuration: { pl: "Czas kroku", en: "Step duration" },
+  seqPlay: { pl: "Odtwarzaj partyturę", en: "Play the score" },
+  seqPause: { pl: "Zatrzymaj odtwarzanie", en: "Pause playback" },
 
   // — widok KATALOG —
   catalogTitle: { pl: "Zbiór Obiektów", en: "Object Collection" },

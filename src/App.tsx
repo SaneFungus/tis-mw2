@@ -12,6 +12,7 @@ import {
   Minimize2,
   Moon,
   Music,
+  Pause,
   Play,
   Quote,
   RotateCcw,
@@ -472,10 +473,17 @@ const DATA: DataItem[] = [
 
 // ─── Ustawienia ───────────────────────────────────────────────────
 
-// Długość partytury: zakres suwaka i wartość startowa.
+// Długość partytury: zakres suwaka i wartość startowa. Górna granica to
+// rozmiar katalogu — partytura idzie bez powtórzeń, więc dłuższej nie da się
+// ułożyć z piętnastu obiektów.
 const SEQ_MIN = 4
-const SEQ_MAX = 24
+const SEQ_MAX = DATA.length
 const SEQ_DEFAULT = 8
+
+// Czas jednego kroku przy odtwarzaniu, w sekundach.
+const STEP_MIN = 3
+const STEP_MAX = 60
+const STEP_DEFAULT = 10
 
 // Napięcie produkcyjne odlicza od 5 do 19 sekund.
 const TENSION_MIN = 5
@@ -491,6 +499,7 @@ const KEY = {
   sequence: "tis-mw2.sequence",
   seqIndex: "tis-mw2.seqIndex",
   seqLength: "tis-mw2.seqLength",
+  stepDuration: "tis-mw2.stepDuration",
 } as const
 
 type View = "shuffle" | "sequence" | "manifesto" | "catalog"
@@ -508,23 +517,42 @@ function randomId(excludeId?: string) {
   return source[Math.floor(Math.random() * source.length)].id
 }
 
-// ─── Suwak długości partytury ─────────────────────────────────────
-const ScoreLength: React.FC<{
-  lang: Lang
+// Partytura bez powtórzeń: tasujemy cały katalog i bierzemy z niego tyle
+// pozycji, ile ma mieć partytura. Każdy obiekt trafia do niej najwyżej raz.
+function drawSequence(len: number) {
+  const pool = DATA.map((item) => item.id)
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const swap = pool[i]
+    pool[i] = pool[j]
+    pool[j] = swap
+  }
+  return pool.slice(0, Math.min(len, pool.length))
+}
+
+// ─── Suwak ────────────────────────────────────────────────────────
+const Suwak: React.FC<{
+  label: string
   value: number
+  min: number
+  max: number
+  unit?: string
   onChange: (value: number) => void
-}> = ({ lang, value, onChange }) => (
+}> = ({ label, value, min, max, unit, onChange }) => (
   <label className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest opacity-60">
-    <span>{UI.seqLength[lang]}</span>
+    <span>{label}</span>
     <input
       type="range"
-      min={SEQ_MIN}
-      max={SEQ_MAX}
+      min={min}
+      max={max}
       value={value}
       onChange={(event) => onChange(Number(event.target.value))}
       className="w-32 cursor-pointer accent-stone-900 dark:accent-stone-100"
     />
-    <span className="w-6 text-right font-mono">{value}</span>
+    <span className="w-8 text-right font-mono">
+      {value}
+      {unit}
+    </span>
   </label>
 )
 
@@ -546,12 +574,18 @@ const App: React.FC = () => {
     KEY.seqLength,
     SEQ_DEFAULT,
   )
+  const [stepDuration, setStepDuration] = usePersistentState<number>(
+    KEY.stepDuration,
+    STEP_DEFAULT,
+  )
 
   // Licznik zmian losowania. Animacja jest przypięta do klucza elementu,
   // więc bez tego powtórne losowanie tego samego obiektu nie odpalałoby ruchu.
   const [shuffleNonce, setShuffleNonce] = useState(0)
   const [tensionOn, setTensionOn] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [stepLeft, setStepLeft] = useState(0)
 
   const { isFullscreen, toggle: toggleFullscreen, supported: canFullscreen } =
     useFullscreen()
@@ -570,6 +604,10 @@ const App: React.FC = () => {
   const stepIndex =
     sequence.length === 0 ? 0 : Math.min(Math.max(seqIndex, 0), sequence.length - 1)
   const step = sequence[stepIndex]
+
+  // Zapis mógł powstać, gdy suwaki miały inne zakresy — przycinamy do dzisiejszych.
+  const scoreLength = Math.min(Math.max(seqLength, SEQ_MIN), SEQ_MAX)
+  const stepSeconds = Math.min(Math.max(stepDuration, STEP_MIN), STEP_MAX)
 
   const toggleLang = () => setLang((l) => (l === "pl" ? "en" : "pl"))
   const toggleStage = () =>
@@ -610,24 +648,63 @@ const App: React.FC = () => {
     if (view !== "shuffle") stopTension()
   }, [view, stopTension])
 
+  const stopPlayback = useCallback(() => {
+    setPlaying(false)
+    setStepLeft(0)
+  }, [])
+
   const generateSequence = useCallback(
     (len: number) => {
-      const ids: string[] = []
-      for (let i = 0; i < len; i++) {
-        ids.push(DATA[Math.floor(Math.random() * DATA.length)].id)
-      }
-      setSeqIds(ids)
+      stopPlayback()
+      setSeqIds(drawSequence(len))
       setSeqIndex(0)
     },
-    [setSeqIds, setSeqIndex],
+    [setSeqIds, setSeqIndex, stopPlayback],
   )
 
+  // Ręczne przejście w trakcie odtwarzania nie przerywa go — tylko odmierza
+  // czas nowego kroku od nowa, jak przewinięcie w odtwarzaczu.
   const goToStep = useCallback(
     (index: number) => {
       setSeqIndex(Math.min(Math.max(index, 0), Math.max(sequence.length - 1, 0)))
+      if (playing) setStepLeft(stepSeconds)
     },
-    [sequence.length, setSeqIndex],
+    [sequence.length, setSeqIndex, playing, stepSeconds],
   )
+
+  const togglePlayback = useCallback(() => {
+    if (playing) {
+      stopPlayback()
+      return
+    }
+    // Play z ostatniego kroku zaczyna partyturę od początku.
+    if (stepIndex >= sequence.length - 1) setSeqIndex(0)
+    setStepLeft(stepSeconds)
+    setPlaying(true)
+  }, [playing, stopPlayback, stepIndex, sequence.length, setSeqIndex, stepSeconds])
+
+  // Odtwarzanie: jeden krok zegara na sekundę, przejście dalej po upływie
+  // czasu, zatrzymanie na ostatnim obiekcie. Tak samo jak przy napięciu,
+  // cała mechanika siedzi w efekcie, nie w funkcji aktualizującej stan.
+  useEffect(() => {
+    if (!playing) return
+    if (stepLeft <= 0) {
+      if (stepIndex >= sequence.length - 1) {
+        setPlaying(false)
+        return
+      }
+      setSeqIndex(stepIndex + 1)
+      setStepLeft(stepSeconds)
+      return
+    }
+    const id = window.setTimeout(() => setStepLeft((t) => t - 1), 1000)
+    return () => window.clearTimeout(id)
+  }, [playing, stepLeft, stepIndex, sequence.length, stepSeconds, setSeqIndex])
+
+  // Partytura gra tylko wtedy, gdy się na nią patrzy.
+  useEffect(() => {
+    if (view !== "sequence") stopPlayback()
+  }, [view, stopPlayback])
 
   return (
     <div
@@ -798,15 +875,25 @@ const App: React.FC = () => {
                 <p className="font-bold mb-6 opacity-40 uppercase tracking-widest">
                   {UI.seqEmpty[lang]}
                 </p>
-                <div className="flex justify-center mb-6">
-                  <ScoreLength
-                    lang={lang}
-                    value={seqLength}
+                <div className="flex flex-col items-center gap-3 mb-6">
+                  <Suwak
+                    label={UI.seqLength[lang]}
+                    value={scoreLength}
+                    min={SEQ_MIN}
+                    max={SEQ_MAX}
                     onChange={setSeqLength}
+                  />
+                  <Suwak
+                    label={UI.seqDuration[lang]}
+                    value={stepSeconds}
+                    min={STEP_MIN}
+                    max={STEP_MAX}
+                    unit="s"
+                    onChange={setStepDuration}
                   />
                 </div>
                 <button
-                  onClick={() => generateSequence(seqLength)}
+                  onClick={() => generateSequence(scoreLength)}
                   className="px-8 py-4 rounded-2xl font-black uppercase cursor-pointer bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
                 >
                   {UI.seqStart[lang]}
@@ -837,13 +924,55 @@ const App: React.FC = () => {
                 {/* Position counter */}
                 <div className="mb-6 font-mono text-xs tracking-widest opacity-50">
                   {stepIndex + 1} / {sequence.length}
+                  {playing && <span> · {stepLeft}s</span>}
                 </div>
 
-                {/* Current sequence symbol */}
-                <div className="w-64 h-64 border-8 rounded-3xl flex items-center justify-center p-12 mb-8 shadow-2xl bg-white border-stone-900 dark:bg-stone-900 dark:border-stone-800">
-                  <div className="w-full h-full text-stone-900 dark:text-white">
-                    {step.symbol("w-full h-full")}
+                {/* Krok partytury, a po bokach male przejscia */}
+                <div className="flex items-center gap-3 sm:gap-6 mb-8">
+                  <button
+                    onClick={() => goToStep(stepIndex - 1)}
+                    disabled={stepIndex === 0}
+                    aria-label={UI.seqBack[lang]}
+                    title={UI.seqBack[lang]}
+                    className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-colors disabled:opacity-10 cursor-pointer bg-stone-200 text-stone-700 hover:bg-stone-300 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
+                  >
+                    <ChevronLeft size={22} />
+                  </button>
+
+                  <div className="flex flex-col items-center">
+                    <div className="w-48 h-48 sm:w-64 sm:h-64 border-8 rounded-3xl flex items-center justify-center p-8 sm:p-12 shadow-2xl bg-white border-stone-900 dark:bg-stone-900 dark:border-stone-800">
+                      <div className="w-full h-full text-stone-900 dark:text-white">
+                        {step.symbol("w-full h-full")}
+                      </div>
+                    </div>
+                    {/* Pasek czasu kroku. Klucz na indeksie, zeby przy przejsciu
+                        do nastepnego obiektu pasek wracal do zera bez animacji. */}
+                    <div
+                      className={cn(
+                        "w-full h-1 mt-3 rounded-full overflow-hidden bg-stone-200 dark:bg-stone-800",
+                        !playing && "opacity-0",
+                      )}
+                    >
+                      <div
+                        key={stepIndex}
+                        className="h-full bg-stone-900 dark:bg-stone-100 transition-[width] duration-1000 ease-linear"
+                        style={{
+                          width:
+                            ((stepSeconds - stepLeft) / stepSeconds) * 100 + "%",
+                        }}
+                      />
+                    </div>
                   </div>
+
+                  <button
+                    onClick={() => goToStep(stepIndex + 1)}
+                    disabled={stepIndex === sequence.length - 1}
+                    aria-label={UI.seqNext[lang]}
+                    title={UI.seqNext[lang]}
+                    className="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center transition-colors disabled:opacity-10 cursor-pointer bg-stone-200 text-stone-700 hover:bg-stone-300 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
+                  >
+                    <ChevronRight size={22} />
+                  </button>
                 </div>
 
                 <div className="text-center mb-10">
@@ -857,7 +986,7 @@ const App: React.FC = () => {
 
                 <div className="flex gap-4 items-center flex-wrap justify-center">
                   <button
-                    onClick={() => generateSequence(seqLength)}
+                    onClick={() => generateSequence(scoreLength)}
                     aria-label={UI.seqRegenerate[lang]}
                     title={UI.seqRegenerate[lang]}
                     className="p-5 rounded-2xl transition-colors cursor-pointer bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-400"
@@ -865,30 +994,31 @@ const App: React.FC = () => {
                     <RotateCcw size={28} />
                   </button>
                   <button
-                    onClick={() => goToStep(stepIndex - 1)}
-                    disabled={stepIndex === 0}
-                    aria-label={UI.seqBack[lang]}
-                    className="flex items-center gap-2 px-6 py-5 rounded-2xl text-lg font-black disabled:opacity-10 shadow-lg cursor-pointer bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                    onClick={togglePlayback}
+                    aria-label={playing ? UI.seqPause[lang] : UI.seqPlay[lang]}
+                    aria-pressed={playing}
+                    title={playing ? UI.seqPause[lang] : UI.seqPlay[lang]}
+                    className="flex items-center justify-center w-24 h-24 rounded-full shadow-lg transition-all active:scale-95 cursor-pointer bg-stone-900 text-white hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
                   >
-                    <ChevronLeft size={24} />
-                    {UI.seqBack[lang]}
-                  </button>
-                  <button
-                    onClick={() => goToStep(stepIndex + 1)}
-                    disabled={stepIndex === sequence.length - 1}
-                    aria-label={UI.seqNext[lang]}
-                    className="flex items-center gap-4 px-12 py-5 rounded-2xl text-2xl font-black disabled:opacity-10 shadow-lg cursor-pointer bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
-                  >
-                    {UI.seqNext[lang]}
-                    <ChevronRight size={32} />
+                    {playing ? <Pause size={36} /> : <Play size={36} />}
                   </button>
                 </div>
 
-                <div className="mt-8">
-                  <ScoreLength
-                    lang={lang}
-                    value={seqLength}
+                <div className="mt-8 flex flex-col items-center gap-3">
+                  <Suwak
+                    label={UI.seqLength[lang]}
+                    value={scoreLength}
+                    min={SEQ_MIN}
+                    max={SEQ_MAX}
                     onChange={setSeqLength}
+                  />
+                  <Suwak
+                    label={UI.seqDuration[lang]}
+                    value={stepSeconds}
+                    min={STEP_MIN}
+                    max={STEP_MAX}
+                    unit="s"
+                    onChange={setStepDuration}
                   />
                 </div>
               </div>
