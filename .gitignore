@@ -16,3 +16,13 @@ _site/
 # counterproductive to check this file into the repository.
 # Details at https://github.com/github/pages-gem/issues/768
 Gemfile.lock
+
+# Node / Vite — dopisane 28.08.2026.
+# Wczesniej ten plik byl gitignore'em Jekylla i nie zakrywal ani node_modules,
+# ani dist, wiec "git add -A" po pierwszym buildzie wciagnalby oba do repo.
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*

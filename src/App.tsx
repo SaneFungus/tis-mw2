@@ -1,21 +1,36 @@
-import React, { useState, useEffect, useRef, useCallback } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import {
-  Shuffle,
-  Play,
+  BookOpen,
+  ChevronLeft,
   ChevronRight,
-  RotateCcw,
   Eye,
   EyeOff,
-  Zap,
-  Quote,
-  BookOpen,
-  Music,
-  LayoutGrid,
-  Layers,
-  Sun,
-  Moon,
   Info,
+  Layers,
+  LayoutGrid,
+  Maximize2,
+  Minimize2,
+  Moon,
+  Music,
+  Play,
+  Quote,
+  RotateCcw,
+  Shuffle,
+  Square,
+  Sun,
+  Zap,
 } from "lucide-react"
+import {
+  APP_BADGE,
+  APP_SUBTITLE,
+  APP_TITLE,
+  HISTORY,
+  QUOTE_SOURCE,
+  UI,
+} from "./i18n"
+import type { Lang } from "./i18n"
+import { useFullscreen, usePersistentState, useWakeLock } from "./hooks"
+import { cn } from "./utils/cn"
 
 // ─── Seeded random for stable SVG rendering ───────────────────────
 function seededRandom(seed: number) {
@@ -455,102 +470,220 @@ const DATA: DataItem[] = [
   },
 ]
 
+// ─── Ustawienia ───────────────────────────────────────────────────
+
+// Długość partytury: zakres suwaka i wartość startowa.
+const SEQ_MIN = 4
+const SEQ_MAX = 24
+const SEQ_DEFAULT = 8
+
+// Napięcie produkcyjne odlicza od 5 do 19 sekund.
+const TENSION_MIN = 5
+const TENSION_SPAN = 15
+
+// Klucze pamięci przeglądarki. Prefiks, żeby nie zderzyć się z innymi
+// aplikacjami stojącymi pod tą samą domeną.
+const KEY = {
+  lang: "tis-mw2.lang",
+  view: "tis-mw2.view",
+  stage: "tis-mw2.stage",
+  current: "tis-mw2.current",
+  sequence: "tis-mw2.sequence",
+  seqIndex: "tis-mw2.seqIndex",
+  seqLength: "tis-mw2.seqLength",
+} as const
+
+type View = "shuffle" | "sequence" | "manifesto" | "catalog"
+type StageMode = "light" | "dark"
+
+// W pamięci trzymamy same identyfikatory — obiekty niosą funkcje rysujące
+// symbole, a tych nie da się zapisać w JSON.
+const BY_ID = new Map(DATA.map((item) => [item.id, item]))
+
+// Losowanie z pominięciem bieżącego obiektu: bez tego raz na piętnaście
+// kliknięć wypadałby ten sam symbol i przycisk wyglądałby na zepsuty.
+function randomId(excludeId?: string) {
+  const pool = DATA.filter((item) => item.id !== excludeId)
+  const source = pool.length > 0 ? pool : DATA
+  return source[Math.floor(Math.random() * source.length)].id
+}
+
+// ─── Suwak długości partytury ─────────────────────────────────────
+const ScoreLength: React.FC<{
+  lang: Lang
+  value: number
+  onChange: (value: number) => void
+}> = ({ lang, value, onChange }) => (
+  <label className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest opacity-60">
+    <span>{UI.seqLength[lang]}</span>
+    <input
+      type="range"
+      min={SEQ_MIN}
+      max={SEQ_MAX}
+      value={value}
+      onChange={(event) => onChange(Number(event.target.value))}
+      className="w-32 cursor-pointer accent-stone-900 dark:accent-stone-100"
+    />
+    <span className="w-6 text-right font-mono">{value}</span>
+  </label>
+)
+
 // ─── App Component ────────────────────────────────────────────────
 const App: React.FC = () => {
-  const [lang, setLang] = useState<"pl" | "en">("pl")
-  const [view, setView] = useState<
-    "shuffle" | "sequence" | "manifesto" | "catalog"
-  >("shuffle")
-  const [currentItem, setCurrentItem] = useState<DataItem>(DATA[0])
-  const [sequence, setSequence] = useState<DataItem[]>([])
-  const [seqIndex, setSeqIndex] = useState(0)
-  const [stageMode, setStageMode] = useState<"light" | "dark">("light")
+  const [lang, setLang] = usePersistentState<Lang>(KEY.lang, "pl")
+  const [view, setView] = usePersistentState<View>(KEY.view, "shuffle")
+  const [stageMode, setStageMode] = usePersistentState<StageMode>(
+    KEY.stage,
+    "light",
+  )
+  const [currentId, setCurrentId] = usePersistentState<string>(
+    KEY.current,
+    DATA[0].id,
+  )
+  const [seqIds, setSeqIds] = usePersistentState<string[]>(KEY.sequence, [])
+  const [seqIndex, setSeqIndex] = usePersistentState<number>(KEY.seqIndex, 0)
+  const [seqLength, setSeqLength] = usePersistentState<number>(
+    KEY.seqLength,
+    SEQ_DEFAULT,
+  )
+
+  // Licznik zmian losowania. Animacja jest przypięta do klucza elementu,
+  // więc bez tego powtórne losowanie tego samego obiektu nie odpalałoby ruchu.
+  const [shuffleNonce, setShuffleNonce] = useState(0)
+  const [tensionOn, setTensionOn] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
-  const tensionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const { isFullscreen, toggle: toggleFullscreen, supported: canFullscreen } =
+    useFullscreen()
+
+  // Ekran nie ma prawa zgasnąć w środku wykonania.
+  useWakeLock(true)
+
+  const isDark = stageMode === "dark"
+
+  // Zapisany identyfikator może pochodzić ze starszej wersji katalogu —
+  // dlatego zawsze przez mapę, z awaryjnym pierwszym obiektem.
+  const currentItem = BY_ID.get(currentId) ?? DATA[0]
+  const sequence = seqIds
+    .map((id) => BY_ID.get(id))
+    .filter((item): item is DataItem => item !== undefined)
+  const stepIndex =
+    sequence.length === 0 ? 0 : Math.min(Math.max(seqIndex, 0), sequence.length - 1)
+  const step = sequence[stepIndex]
 
   const toggleLang = () => setLang((l) => (l === "pl" ? "en" : "pl"))
   const toggleStage = () =>
     setStageMode((s) => (s === "light" ? "dark" : "light"))
 
   const handleShuffle = useCallback(() => {
-    const next = DATA[Math.floor(Math.random() * DATA.length)]
-    setCurrentItem(next)
+    setCurrentId((prev) => randomId(prev))
+    setShuffleNonce((n) => n + 1)
+  }, [setCurrentId])
+
+  const stopTension = useCallback(() => {
+    setTensionOn(false)
+    setTimeLeft(0)
   }, [])
 
   const startTension = useCallback(() => {
-    const time = 5 + Math.floor(Math.random() * 15)
-    setTimeLeft(time)
-    if (tensionTimerRef.current) clearInterval(tensionTimerRef.current)
-    const id = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(id)
-          handleShuffle()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    tensionTimerRef.current = id
-  }, [handleShuffle])
-
-  useEffect(() => {
-    return () => {
-      if (tensionTimerRef.current) clearInterval(tensionTimerRef.current)
-    }
+    setTimeLeft(TENSION_MIN + Math.floor(Math.random() * TENSION_SPAN))
+    setTensionOn(true)
   }, [])
 
-  const generateSequence = (len = 8) => {
-    const newSeq: DataItem[] = []
-    for (let i = 0; i < len; i++) {
-      newSeq.push(DATA[Math.floor(Math.random() * DATA.length)])
+  // Odliczanie żyje w efekcie, a nie w funkcji aktualizującej stan.
+  // Poprzednia wersja losowała obiekt ze środka aktualizatora, który React
+  // w trybie deweloperskim uruchamia dwa razy — stąd przeskoki o dwa.
+  useEffect(() => {
+    if (!tensionOn) return
+    if (timeLeft <= 0) {
+      setTensionOn(false)
+      handleShuffle()
+      return
     }
-    setSequence(newSeq)
-    setSeqIndex(0)
-  }
+    const id = window.setTimeout(() => setTimeLeft((t) => t - 1), 1000)
+    return () => window.clearTimeout(id)
+  }, [tensionOn, timeLeft, handleShuffle])
 
-  const nextInSequence = () => {
-    if (seqIndex < sequence.length - 1) {
-      setSeqIndex((prev) => prev + 1)
-    }
-  }
+  // Napięcie widać wyłącznie w widoku LOSUJ. Gdyby chodziło dalej po zmianie
+  // zakładki, obiekt zmieniałby się poza zasięgiem wzroku.
+  useEffect(() => {
+    if (view !== "shuffle") stopTension()
+  }, [view, stopTension])
 
-  const isDark = stageMode === "dark"
+  const generateSequence = useCallback(
+    (len: number) => {
+      const ids: string[] = []
+      for (let i = 0; i < len; i++) {
+        ids.push(DATA[Math.floor(Math.random() * DATA.length)].id)
+      }
+      setSeqIds(ids)
+      setSeqIndex(0)
+    },
+    [setSeqIds, setSeqIndex],
+  )
+
+  const goToStep = useCallback(
+    (index: number) => {
+      setSeqIndex(Math.min(Math.max(index, 0), Math.max(sequence.length - 1, 0)))
+    },
+    [sequence.length, setSeqIndex],
+  )
 
   return (
     <div
-      className={`min-h-screen transition-colors duration-1000 p-4 md:p-8 flex flex-col items-center ${
-        isDark ? "bg-stone-950 text-stone-100" : "bg-stone-100 text-stone-900"
-      }`}
+      className={cn(
+        "min-h-screen p-4 md:p-8 flex flex-col items-center transition-colors duration-1000",
+        "bg-stone-100 text-stone-900 dark:bg-stone-950 dark:text-stone-100",
+        isDark && "dark",
+      )}
       style={{ fontFamily: "system-ui, -apple-system, sans-serif" }}
     >
       {/* Header */}
       <header className="w-full max-w-2xl flex justify-between items-center mb-8">
         <div className="flex flex-col">
           <h1 className="text-2xl font-black tracking-tighter uppercase">
-            TIS-Lab{" "}
-            <span className="text-xs font-normal opacity-40 ml-1">MW2</span>
+            {APP_TITLE}{" "}
+            <span className="text-xs font-normal opacity-40 ml-1">
+              {APP_BADGE}
+            </span>
           </h1>
           <span className="text-[10px] font-mono opacity-50 uppercase">
-            Stage Composition Tool
+            {APP_SUBTITLE}
           </span>
         </div>
         <div className="flex gap-2">
+          {canFullscreen && (
+            <button
+              onClick={toggleFullscreen}
+              aria-label={
+                isFullscreen
+                  ? UI.ariaFullscreenOff[lang]
+                  : UI.ariaFullscreenOn[lang]
+              }
+              title={
+                isFullscreen
+                  ? UI.ariaFullscreenOff[lang]
+                  : UI.ariaFullscreenOn[lang]
+              }
+              className="p-2 rounded-full transition-all cursor-pointer bg-stone-300 text-stone-900 dark:bg-stone-800 dark:text-stone-100"
+            >
+              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            </button>
+          )}
           <button
             onClick={toggleStage}
-            className={`p-2 rounded-full transition-all cursor-pointer ${
-              isDark
-                ? "bg-stone-100 text-stone-900"
-                : "bg-stone-900 text-stone-100"
-            }`}
+            aria-label={UI.ariaStage[lang]}
+            aria-pressed={isDark}
+            title={UI.ariaStage[lang]}
+            className="p-2 rounded-full transition-all cursor-pointer bg-stone-900 text-stone-100 dark:bg-stone-100 dark:text-stone-900"
           >
             {isDark ? <Eye size={18} /> : <EyeOff size={18} />}
           </button>
           <button
             onClick={toggleLang}
-            className={`px-3 py-1 rounded-full text-xs font-bold uppercase transition-all cursor-pointer ${
-              isDark ? "bg-stone-800" : "bg-stone-300"
-            }`}
+            aria-label={UI.ariaLang[lang]}
+            title={UI.ariaLang[lang]}
+            className="px-3 py-1 rounded-full text-xs font-bold uppercase transition-all cursor-pointer bg-stone-300 dark:bg-stone-800"
           >
             {lang}
           </button>
@@ -558,45 +691,41 @@ const App: React.FC = () => {
       </header>
 
       {/* Navigation */}
-      <nav
-        className={`flex gap-1 mb-8 p-1 rounded-2xl w-full max-w-2xl transition-colors overflow-x-auto no-scrollbar ${
-          isDark ? "bg-stone-900" : "bg-stone-200"
-        }`}
-      >
+      <nav className="flex gap-1 mb-8 p-1 rounded-2xl w-full max-w-2xl transition-colors overflow-x-auto no-scrollbar bg-stone-200 dark:bg-stone-900">
         {(
           [
             {
               id: "shuffle" as const,
               icon: <Shuffle size={14} />,
-              label: { pl: "LOSUJ", en: "RANDOM" },
+              label: UI.navRandom,
             },
             {
               id: "sequence" as const,
               icon: <Play size={14} />,
-              label: { pl: "SCORE", en: "SCORE" },
+              label: UI.navScore,
             },
             {
               id: "catalog" as const,
               icon: <LayoutGrid size={14} />,
-              label: { pl: "KATALOG", en: "CATALOG" },
+              label: UI.navCatalog,
             },
             {
               id: "manifesto" as const,
               icon: <BookOpen size={14} />,
-              label: { pl: "TEORIA", en: "THEORY" },
+              label: UI.navTheory,
             },
           ] as const
         ).map((nav) => (
           <button
             key={nav.id}
             onClick={() => setView(nav.id)}
-            className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 py-2.5 rounded-xl transition-all font-bold text-[9px] tracking-widest cursor-pointer ${
+            aria-current={view === nav.id ? "page" : undefined}
+            className={cn(
+              "flex-1 min-w-[80px] flex items-center justify-center gap-1.5 py-2.5 rounded-xl transition-all font-bold text-[9px] tracking-widest cursor-pointer",
               view === nav.id
-                ? isDark
-                  ? "bg-stone-700 shadow-lg text-white"
-                  : "bg-white shadow-md text-stone-900"
-                : "opacity-40 hover:opacity-100"
-            }`}
+                ? "bg-white shadow-md text-stone-900 dark:bg-stone-700 dark:shadow-lg dark:text-white"
+                : "opacity-40 hover:opacity-100",
+            )}
           >
             {nav.icon} {nav.label[lang]}
           </button>
@@ -609,23 +738,13 @@ const App: React.FC = () => {
         {view === "shuffle" && (
           <div
             className="flex flex-col items-center w-full animate-zoom-in"
-            key={currentItem.id + "-shuffle"}
+            key={currentItem.id + "-" + shuffleNonce}
           >
-            <div
-              className={`w-72 h-72 md:w-96 md:h-96 border-[12px] rounded-full flex items-center justify-center p-16 mb-8 transition-all relative overflow-hidden ${
-                isDark
-                  ? "bg-black border-stone-800"
-                  : "bg-white border-stone-900 shadow-2xl"
-              }`}
-            >
-              <div
-                className={`relative z-10 w-full h-full ${
-                  isDark ? "text-stone-300" : "text-stone-900"
-                }`}
-              >
+            <div className="w-72 h-72 md:w-96 md:h-96 border-[12px] rounded-full flex items-center justify-center p-16 mb-8 transition-all relative overflow-hidden bg-white border-stone-900 shadow-2xl dark:bg-black dark:border-stone-800 dark:shadow-none">
+              <div className="relative z-10 w-full h-full text-stone-900 dark:text-stone-300">
                 {currentItem.symbol("w-full h-full")}
               </div>
-              {timeLeft > 0 && (
+              {tensionOn && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-20">
                   <span className="text-6xl font-black text-white font-mono">
                     {timeLeft}s
@@ -635,18 +754,10 @@ const App: React.FC = () => {
             </div>
 
             <div className="text-center mb-10 px-4">
-              <h2
-                className={`text-4xl font-black uppercase tracking-tighter mb-2 ${
-                  isDark ? "text-white" : "text-stone-900"
-                }`}
-              >
+              <h2 className="text-4xl font-black uppercase tracking-tighter mb-2 text-stone-900 dark:text-white">
                 {currentItem.title[lang]}
               </h2>
-              <p
-                className={`text-lg max-w-md leading-tight font-medium italic ${
-                  isDark ? "text-stone-400" : "text-stone-500"
-                }`}
-              >
+              <p className="text-lg max-w-md leading-tight font-medium italic text-stone-500 dark:text-stone-400">
                 &ldquo;{currentItem.desc[lang]}&rdquo;
               </p>
             </div>
@@ -654,24 +765,25 @@ const App: React.FC = () => {
             <div className="flex gap-4">
               <button
                 onClick={handleShuffle}
-                className={`px-10 py-5 rounded-2xl text-xl font-black transition-all active:scale-95 shadow-xl cursor-pointer ${
-                  isDark
-                    ? "bg-stone-100 text-stone-900 hover:bg-white"
-                    : "bg-stone-900 text-white hover:bg-stone-800"
-                }`}
+                className="px-10 py-5 rounded-2xl text-xl font-black transition-all active:scale-95 shadow-xl cursor-pointer bg-stone-900 text-white hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
               >
-                {lang === "pl" ? "NOWY OBIEKT" : "NEW OBJECT"}
+                {UI.newObject[lang]}
               </button>
               <button
-                onClick={startTension}
-                className={`p-5 rounded-2xl transition-all shadow-xl cursor-pointer ${
-                  isDark
-                    ? "bg-stone-800 text-amber-400"
-                    : "bg-amber-100 text-amber-900"
-                }`}
-                title="Production Tension Mode"
+                onClick={tensionOn ? stopTension : startTension}
+                aria-label={
+                  tensionOn ? UI.tensionStop[lang] : UI.tensionStart[lang]
+                }
+                aria-pressed={tensionOn}
+                title={tensionOn ? UI.tensionStop[lang] : UI.tensionStart[lang]}
+                className={cn(
+                  "p-5 rounded-2xl transition-all shadow-xl cursor-pointer",
+                  tensionOn
+                    ? "bg-amber-500 text-stone-900 dark:bg-amber-500 dark:text-stone-900"
+                    : "bg-amber-100 text-amber-900 dark:bg-stone-800 dark:text-amber-400",
+                )}
               >
-                <Zap size={24} />
+                {tensionOn ? <Square size={24} /> : <Zap size={24} />}
               </button>
             </div>
           </div>
@@ -680,98 +792,104 @@ const App: React.FC = () => {
         {/* ─── SEQUENCE VIEW ─── */}
         {view === "sequence" && (
           <div className="w-full flex flex-col items-center animate-slide-up">
-            {sequence.length === 0 ? (
-              <div
-                className={`w-full py-24 border-4 border-dashed rounded-3xl text-center ${
-                  isDark
-                    ? "border-stone-800 bg-stone-900/20"
-                    : "border-stone-300 bg-white/50"
-                }`}
-              >
+            {sequence.length === 0 || step === undefined ? (
+              <div className="w-full py-24 border-4 border-dashed rounded-3xl text-center border-stone-300 bg-white/50 dark:border-stone-800 dark:bg-stone-900/20">
                 <Music size={48} className="mx-auto mb-6 opacity-20" />
                 <p className="font-bold mb-6 opacity-40 uppercase tracking-widest">
-                  {lang === "pl"
-                    ? "Generuj absolutną dekompozycję"
-                    : "Generate absolute decomposition"}
+                  {UI.seqEmpty[lang]}
                 </p>
+                <div className="flex justify-center mb-6">
+                  <ScoreLength
+                    lang={lang}
+                    value={seqLength}
+                    onChange={setSeqLength}
+                  />
+                </div>
                 <button
-                  onClick={() => generateSequence()}
-                  className={`px-8 py-4 rounded-2xl font-black uppercase cursor-pointer ${
-                    isDark
-                      ? "bg-stone-100 text-stone-900"
-                      : "bg-stone-900 text-white"
-                  }`}
+                  onClick={() => generateSequence(seqLength)}
+                  className="px-8 py-4 rounded-2xl font-black uppercase cursor-pointer bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
                 >
-                  {lang === "pl" ? "START KOMPOZYCJI" : "START COMPOSITION"}
+                  {UI.seqStart[lang]}
                 </button>
               </div>
             ) : (
               <div className="w-full flex flex-col items-center">
                 {/* Sequence dots */}
-                <div className="flex gap-2 mb-12 overflow-x-auto p-4 w-full justify-center no-scrollbar">
+                <div className="flex gap-2 mb-6 overflow-x-auto p-4 w-full justify-center no-scrollbar">
                   {sequence.map((item, i) => (
-                    <div
+                    <button
                       key={i}
-                      className={`flex-shrink-0 w-12 h-12 rounded-full border-2 flex items-center justify-center text-sm font-black transition-all ${
-                        i === seqIndex
-                          ? isDark
-                            ? "bg-stone-100 text-stone-900 border-white scale-125"
-                            : "bg-stone-900 text-white border-stone-900 scale-125"
-                          : isDark
-                            ? "bg-stone-900 border-stone-800 text-stone-700"
-                            : "bg-white border-stone-200 text-stone-300"
-                      }`}
+                      onClick={() => goToStep(i)}
+                      aria-label={UI.seqStep[lang] + " " + (i + 1)}
+                      aria-current={i === stepIndex ? "step" : undefined}
+                      className={cn(
+                        "flex-shrink-0 w-12 h-12 rounded-full border-2 flex items-center justify-center text-sm font-black transition-all cursor-pointer",
+                        i === stepIndex
+                          ? "scale-125 bg-stone-900 text-white border-stone-900 dark:bg-stone-100 dark:text-stone-900 dark:border-white"
+                          : "bg-white border-stone-200 text-stone-300 hover:border-stone-400 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-700 dark:hover:border-stone-600",
+                      )}
                     >
                       {item.id}
-                    </div>
+                    </button>
                   ))}
                 </div>
 
-                {/* Current sequence symbol */}
-                <div
-                  className={`w-64 h-64 border-8 rounded-3xl flex items-center justify-center p-12 mb-8 shadow-2xl ${
-                    isDark
-                      ? "bg-stone-900 border-stone-800"
-                      : "bg-white border-stone-900"
-                  }`}
-                >
-                  {sequence[seqIndex].symbol(
-                    `w-full h-full ${isDark ? "text-white" : "text-stone-900"}`,
-                  )}
+                {/* Position counter */}
+                <div className="mb-6 font-mono text-xs tracking-widest opacity-50">
+                  {stepIndex + 1} / {sequence.length}
                 </div>
 
-                <div className="text-center mb-12">
+                {/* Current sequence symbol */}
+                <div className="w-64 h-64 border-8 rounded-3xl flex items-center justify-center p-12 mb-8 shadow-2xl bg-white border-stone-900 dark:bg-stone-900 dark:border-stone-800">
+                  <div className="w-full h-full text-stone-900 dark:text-white">
+                    {step.symbol("w-full h-full")}
+                  </div>
+                </div>
+
+                <div className="text-center mb-10">
                   <h3 className="text-3xl font-black uppercase mb-3">
-                    {sequence[seqIndex].title[lang]}
+                    {step.title[lang]}
                   </h3>
                   <p className="text-stone-500 italic max-w-sm px-4">
-                    &ldquo;{sequence[seqIndex].desc[lang]}&rdquo;
+                    &ldquo;{step.desc[lang]}&rdquo;
                   </p>
                 </div>
 
-                <div className="flex gap-6">
+                <div className="flex gap-4 items-center flex-wrap justify-center">
                   <button
-                    onClick={() => generateSequence()}
-                    className={`p-5 rounded-2xl transition-colors cursor-pointer ${
-                      isDark
-                        ? "bg-stone-800 text-stone-400"
-                        : "bg-stone-200 text-stone-600"
-                    }`}
+                    onClick={() => generateSequence(seqLength)}
+                    aria-label={UI.seqRegenerate[lang]}
+                    title={UI.seqRegenerate[lang]}
+                    className="p-5 rounded-2xl transition-colors cursor-pointer bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-400"
                   >
                     <RotateCcw size={28} />
                   </button>
                   <button
-                    onClick={nextInSequence}
-                    disabled={seqIndex === sequence.length - 1}
-                    className={`flex items-center gap-4 px-12 py-5 rounded-2xl text-2xl font-black disabled:opacity-10 shadow-lg cursor-pointer ${
-                      isDark
-                        ? "bg-stone-100 text-stone-900"
-                        : "bg-stone-900 text-white"
-                    }`}
+                    onClick={() => goToStep(stepIndex - 1)}
+                    disabled={stepIndex === 0}
+                    aria-label={UI.seqBack[lang]}
+                    className="flex items-center gap-2 px-6 py-5 rounded-2xl text-lg font-black disabled:opacity-10 shadow-lg cursor-pointer bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-200"
                   >
-                    {lang === "pl" ? "DALEJ" : "NEXT"}
+                    <ChevronLeft size={24} />
+                    {UI.seqBack[lang]}
+                  </button>
+                  <button
+                    onClick={() => goToStep(stepIndex + 1)}
+                    disabled={stepIndex === sequence.length - 1}
+                    aria-label={UI.seqNext[lang]}
+                    className="flex items-center gap-4 px-12 py-5 rounded-2xl text-2xl font-black disabled:opacity-10 shadow-lg cursor-pointer bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900"
+                  >
+                    {UI.seqNext[lang]}
                     <ChevronRight size={32} />
                   </button>
+                </div>
+
+                <div className="mt-8">
+                  <ScoreLength
+                    lang={lang}
+                    value={seqLength}
+                    onChange={setSeqLength}
+                  />
                 </div>
               </div>
             )}
@@ -782,30 +900,21 @@ const App: React.FC = () => {
         {view === "catalog" && (
           <div className="w-full animate-fade-in pb-12">
             <h2 className="text-2xl font-black uppercase mb-8 text-center tracking-widest opacity-40">
-              {lang === "pl" ? "Zbiór Obiektów" : "Object Collection"}
+              {UI.catalogTitle[lang]}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
               {DATA.map((item) => (
-                <div
+                <button
                   key={item.id}
                   onClick={() => {
-                    setCurrentItem(item)
+                    setCurrentId(item.id)
+                    setShuffleNonce((n) => n + 1)
                     setView("shuffle")
                   }}
-                  className={`group relative p-6 rounded-3xl border-2 transition-all cursor-pointer hover:scale-[1.02] active:scale-95 ${
-                    isDark
-                      ? "bg-stone-900 border-stone-800 hover:border-stone-600"
-                      : "bg-white border-stone-200 hover:border-stone-900 shadow-sm hover:shadow-xl"
-                  }`}
+                  className="group relative p-6 rounded-3xl border-2 text-left transition-all cursor-pointer hover:scale-[1.02] active:scale-95 bg-white border-stone-200 hover:border-stone-900 shadow-sm hover:shadow-xl dark:bg-stone-900 dark:border-stone-800 dark:hover:border-stone-600 dark:shadow-none"
                 >
                   <div className="flex items-start gap-4">
-                    <div
-                      className={`w-16 h-16 flex-shrink-0 p-2 rounded-xl transition-colors ${
-                        isDark
-                          ? "bg-black text-stone-400"
-                          : "bg-stone-100 text-stone-900"
-                      }`}
-                    >
+                    <div className="w-16 h-16 flex-shrink-0 p-2 rounded-xl transition-colors bg-stone-100 text-stone-900 dark:bg-black dark:text-stone-400">
                       {item.symbol("w-full h-full")}
                     </div>
                     <div className="flex-grow">
@@ -822,7 +931,7 @@ const App: React.FC = () => {
                       </p>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -832,186 +941,90 @@ const App: React.FC = () => {
         {view === "manifesto" && (
           <div className="w-full max-w-3xl animate-fade-in space-y-8 pb-20">
             {/* Header section with Irzykowski quote */}
-            <section
-              className={`p-8 rounded-3xl border-l-8 ${
-                isDark
-                  ? "bg-stone-900 border-amber-600"
-                  : "bg-white border-stone-900 shadow-lg"
-              }`}
-            >
+            <section className="p-8 rounded-3xl border-l-8 bg-white border-stone-900 shadow-lg dark:bg-stone-900 dark:border-amber-600 dark:shadow-none">
               <h3 className="text-xl font-black uppercase mb-4 flex items-center gap-2">
                 <Quote size={20} className="text-amber-500" />
-                {lang === "pl" ? "Fundament Snu" : "Foundation of Dream"}
+                {UI.theoryFoundation[lang]}
               </h3>
               <p
                 className="text-2xl italic opacity-90 leading-tight mb-4"
                 style={{ fontFamily: "Georgia, serif" }}
               >
-                {lang === "pl"
-                  ? "„...przez szereg lat prowadziła życie pełne fantomowych snów”"
-                  : "“...for several years she had led a life full of phantom dreams”"}
+                {UI.theoryQuote[lang]}
               </p>
               <p className="text-[10px] uppercase tracking-widest opacity-40">
-                Karol Irzykowski, Pałuba (Sny Marii Dunin)
+                {QUOTE_SOURCE}
               </p>
             </section>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Instrumental Actor */}
-              <section
-                className={`p-6 rounded-3xl ${
-                  isDark
-                    ? "bg-stone-900 border border-stone-800"
-                    : "bg-stone-50 border border-stone-200 shadow-sm"
-                }`}
-              >
+              <section className="p-6 rounded-3xl bg-stone-50 border border-stone-200 shadow-sm dark:bg-stone-900 dark:border-stone-800 dark:shadow-none">
                 <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
                   <Layers size={18} className="text-amber-500" />
-                  {lang === "pl"
-                    ? "Aktor jako Instrument"
-                    : "Actor as Instrument"}
+                  {UI.theoryActorTitle[lang]}
                 </h4>
                 <p className="text-xs leading-relaxed opacity-70 mb-4">
-                  {lang === "pl"
-                    ? 'Aktor to artysta działający pomiędzy muzyką a teatrem. Jest "nastrojony jak instrument", traktuje swoją obecność abstrakcyjnie – jak dźwięk w partyturze.'
-                    : 'The actor is an artist working between music and theater. He is "tuned like an instrument", treats his presence abstractly – like a sound in a score.'}
+                  {UI.theoryActorBody[lang]}
                 </p>
                 <ul className="text-[10px] space-y-2 font-mono opacity-80 italic">
-                  <li>
-                    •{" "}
-                    {lang === "pl"
-                      ? "Ciało jako źródło dźwięku (szuranie, chrupanie, bełkot)"
-                      : "Body as a sound source (shuffling, crunching, gibberish)"}
-                  </li>
-                  <li>
-                    •{" "}
-                    {lang === "pl"
-                      ? "Konkretne rekwizyty: piła, Linki, piłeczki ping-pongowe"
-                      : "Concrete props: saw, strings, ping-pong balls"}
-                  </li>
-                  <li>
-                    •{" "}
-                    {lang === "pl"
-                      ? "Audiowizualność: gest ewokuje muzykę"
-                      : "Audiovisuality: gesture evokes music"}
-                  </li>
+                  {UI.theoryActorBullets[lang].map((bullet) => (
+                    <li key={bullet}>• {bullet}</li>
+                  ))}
                 </ul>
               </section>
 
               {/* Absolute Decomposition */}
-              <section
-                className={`p-6 rounded-3xl ${
-                  isDark
-                    ? "bg-stone-900 border border-stone-800"
-                    : "bg-stone-50 border border-stone-200 shadow-sm"
-                }`}
-              >
+              <section className="p-6 rounded-3xl bg-stone-50 border border-stone-200 shadow-sm dark:bg-stone-900 dark:border-stone-800 dark:shadow-none">
                 <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
                   <RotateCcw size={18} className="text-amber-500" />
-                  {lang === "pl"
-                    ? "Absolutna Dekompozycja"
-                    : "Absolute Decomposition"}
+                  {UI.theoryDecompTitle[lang]}
                 </h4>
                 <p className="text-xs leading-relaxed opacity-70 mb-4">
-                  {lang === "pl"
-                    ? "Koncepcja zakładająca całkowitą swobodę w układzie elementów w czasie. Forma nie jest zamknięta, dopóki materiał nie zmanifestuje się w działaniu."
-                    : "A concept assuming complete freedom in the arrangement of elements in time. The form is not closed until the material manifests itself in action."}
+                  {UI.theoryDecompBody[lang]}
                 </p>
-                <div
-                  className={`p-3 rounded-xl text-[9px] font-bold ${isDark ? "bg-black" : "bg-white"}`}
-                >
-                  {lang === "pl"
-                    ? "ZASADA: Brak ostatecznej formy (No final form)."
-                    : "PRINCIPLE: No final form."}
+                <div className="p-3 rounded-xl text-[9px] font-bold bg-white dark:bg-black">
+                  {UI.theoryDecompPrinciple[lang]}
                 </div>
               </section>
 
               {/* Production Tension */}
-              <section
-                className={`p-6 rounded-3xl ${
-                  isDark
-                    ? "bg-stone-900 border border-stone-800"
-                    : "bg-stone-50 border border-stone-200 shadow-sm"
-                }`}
-              >
+              <section className="p-6 rounded-3xl bg-stone-50 border border-stone-200 shadow-sm dark:bg-stone-900 dark:border-stone-800 dark:shadow-none">
                 <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
                   <Zap size={18} className="text-amber-500" />
-                  {lang === "pl"
-                    ? "Napięcie Produkcyjne"
-                    : "Production Tension"}
+                  {UI.theoryTensionTitle[lang]}
                 </h4>
                 <p className="text-xs leading-relaxed opacity-70">
-                  {lang === "pl"
-                    ? "Nie jest to czysta improwizacja. To specyficzny stan napięcia wynikający z nieokreśloności partytury, który zmusza wykonawcę do bycia reżyserem własnej partii w czasie rzeczywistym."
-                    : "It is not a pure improvisation. It is a specific state of tension resulting from the indefiniteness of the score, which forces the performer to be the director of their own part in real time."}
+                  {UI.theoryTensionBody[lang]}
                 </p>
               </section>
 
               {/* Light Structure */}
-              <section
-                className={`p-6 rounded-3xl ${
-                  isDark
-                    ? "bg-stone-900 border border-stone-800"
-                    : "bg-stone-50 border border-stone-200 shadow-sm"
-                }`}
-              >
+              <section className="p-6 rounded-3xl bg-stone-50 border border-stone-200 shadow-sm dark:bg-stone-900 dark:border-stone-800 dark:shadow-none">
                 <h4 className="font-black uppercase text-sm mb-4 flex items-center gap-2">
                   <Info size={18} className="text-amber-500" />
-                  {lang === "pl"
-                    ? "Struktura i Światło"
-                    : "Structure and Light"}
+                  {UI.theoryLightTitle[lang]}
                 </h4>
                 <div className="grid grid-cols-2 gap-2 text-[10px] uppercase font-black text-center">
-                  <div
-                    className={`p-3 rounded-xl flex flex-col items-center gap-1 ${isDark ? "bg-black" : "bg-white"}`}
-                  >
-                    <Moon size={14} /> {lang === "pl" ? "Ciemność" : "Darkness"}
+                  <div className="p-3 rounded-xl flex flex-col items-center gap-1 bg-white dark:bg-black">
+                    <Moon size={14} /> {UI.theoryDarkness[lang]}
                   </div>
-                  <div
-                    className={`p-3 rounded-xl flex flex-col items-center gap-1 ${isDark ? "bg-black" : "bg-white"}`}
-                  >
-                    <Sun size={14} /> {lang === "pl" ? "Światło" : "Light"}
+                  <div className="p-3 rounded-xl flex flex-col items-center gap-1 bg-white dark:bg-black">
+                    <Sun size={14} /> {UI.theoryLight[lang]}
                   </div>
                 </div>
                 <p className="text-[9px] mt-3 opacity-50 italic">
-                  {lang === "pl"
-                    ? "Część I: Fantomowy sen w mroku. Część II: Ostra konfrontacja w pełnym blasku."
-                    : "Part I: Phantom dream in the dark. Part II: Sharp confrontation in full glare."}
+                  {UI.theoryLightNote[lang]}
                 </p>
               </section>
             </div>
 
             {/* Historical context grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                {
-                  label: "MW2",
-                  value: "1963",
-                  sub: { pl: "Kraków", en: "Cracow" },
-                },
-                {
-                  label: "SCANDAL",
-                  value: "1964",
-                  sub: { pl: "Premiera", en: "Premiere" },
-                },
-                {
-                  label: "ACTOR",
-                  value: "PESZEK",
-                  sub: { pl: "Interpretator", en: "Interpreter" },
-                },
-                {
-                  label: "GENRE",
-                  value: "TIS",
-                  sub: { pl: "Instrumentalny", en: "Instrumental" },
-                },
-              ].map((box, i) => (
+              {HISTORY.map((box) => (
                 <div
-                  key={i}
-                  className={`p-4 rounded-2xl text-center flex flex-col justify-center ${
-                    isDark
-                      ? "bg-stone-900 border border-stone-800"
-                      : "bg-white shadow-sm border border-stone-100"
-                  }`}
+                  key={box.label}
+                  className="p-4 rounded-2xl text-center flex flex-col justify-center bg-white shadow-sm border border-stone-100 dark:bg-stone-900 dark:border-stone-800 dark:shadow-none"
                 >
                   <div className="text-[9px] opacity-40 uppercase font-black">
                     {box.label}
@@ -1029,19 +1042,9 @@ const App: React.FC = () => {
 
       {/* Footer */}
       <footer className="mt-8 text-center max-w-md pb-8">
-        <div
-          className={`text-[10px] font-mono mb-4 px-4 py-2 rounded border inline-block ${
-            isDark
-              ? "border-stone-800 text-stone-500"
-              : "border-stone-200 text-stone-400"
-          }`}
-        >
-          {lang === "pl" ? "ESTETYKA:" : "AESTHETICS:"}
-          <span className="ml-1 opacity-80">
-            {lang === "pl"
-              ? "Rozbieżność między reprezentacją a rzeczywistością."
-              : "Discrepancy between representation and reality."}
-          </span>
+        <div className="text-[10px] font-mono mb-4 px-4 py-2 rounded border inline-block border-stone-200 text-stone-400 dark:border-stone-800 dark:text-stone-500">
+          {UI.footerLabel[lang]}
+          <span className="ml-1 opacity-80">{UI.footerText[lang]}</span>
         </div>
       </footer>
     </div>

@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Tryb ciemny sterujemy klasa .dark na korzeniu, a nie ustawieniem systemu:
+   to jest oswietlenie sceny, nie preferencja uzytkownika. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Hide scrollbar utility */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
